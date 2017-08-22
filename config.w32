@@ -1,0 +1,13 @@
+// $Id$
+// vim:ft=javascript
+
+// If your extension references something external, use ARG_WITH
+// ARG_WITH("azalea_sqlbuilder", "for azalea_sqlbuilder support", "no");
+
+// Otherwise, use ARG_ENABLE
+// ARG_ENABLE("azalea_sqlbuilder", "enable azalea_sqlbuilder support", "no");
+
+if (PHP_AZALEA_SQLBUILDER != "no") {
+	EXTENSION("azalea_sqlbuilder", "azalea_sqlbuilder.c", PHP_EXTNAME_SHARED, "/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1");
+}
+
