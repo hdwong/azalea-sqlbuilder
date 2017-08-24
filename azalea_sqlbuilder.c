@@ -27,70 +27,17 @@
 #include "ext/standard/info.h"
 #include "php_azalea_sqlbuilder.h"
 
-/* If you declare any globals in php_azalea_sqlbuilder.h uncomment this:
-ZEND_DECLARE_MODULE_GLOBALS(azalea_sqlbuilder)
-*/
+#include "azalea/sqlbuilder.h"
 
 /* True global resources - no need for thread safety here */
 static int le_azalea_sqlbuilder;
-
-/* {{{ PHP_INI
- */
-/* Remove comments and fill if you need to have entries in php.ini
-PHP_INI_BEGIN()
-    STD_PHP_INI_ENTRY("azalea_sqlbuilder.global_value",      "42", PHP_INI_ALL, OnUpdateLong, global_value, zend_azalea_sqlbuilder_globals, azalea_sqlbuilder_globals)
-    STD_PHP_INI_ENTRY("azalea_sqlbuilder.global_string", "foobar", PHP_INI_ALL, OnUpdateString, global_string, zend_azalea_sqlbuilder_globals, azalea_sqlbuilder_globals)
-PHP_INI_END()
-*/
-/* }}} */
-
-/* Remove the following function when you have successfully modified config.m4
-   so that your module can be compiled into PHP, it exists only for testing
-   purposes. */
-
-/* Every user-visible function in PHP should document itself in the source */
-/* {{{ proto string confirm_azalea_sqlbuilder_compiled(string arg)
-   Return a string to confirm that the module is compiled in */
-PHP_FUNCTION(confirm_azalea_sqlbuilder_compiled)
-{
-	char *arg = NULL;
-	size_t arg_len, len;
-	zend_string *strg;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "s", &arg, &arg_len) == FAILURE) {
-		return;
-	}
-
-	strg = strpprintf(0, "Congratulations! You have successfully modified ext/%.78s/config.m4. Module %.78s is now compiled into PHP.", "azalea_sqlbuilder", arg);
-
-	RETURN_STR(strg);
-}
-/* }}} */
-/* The previous line is meant for vim and emacs, so it can correctly fold and
-   unfold functions in source code. See the corresponding marks just before
-   function definition, where the functions purpose is also documented. Please
-   follow this convention for the convenience of others editing your code.
-*/
-
-
-/* {{{ php_azalea_sqlbuilder_init_globals
- */
-/* Uncomment this function if you have INI entries
-static void php_azalea_sqlbuilder_init_globals(zend_azalea_sqlbuilder_globals *azalea_sqlbuilder_globals)
-{
-	azalea_sqlbuilder_globals->global_value = 0;
-	azalea_sqlbuilder_globals->global_string = NULL;
-}
-*/
-/* }}} */
 
 /* {{{ PHP_MINIT_FUNCTION
  */
 PHP_MINIT_FUNCTION(azalea_sqlbuilder)
 {
-	/* If you have INI entries, uncomment these lines
-	REGISTER_INI_ENTRIES();
-	*/
+	ZEND_MODULE_STARTUP_N(main)(INIT_FUNC_ARGS_PASSTHRU);
+
 	return SUCCESS;
 }
 /* }}} */
@@ -99,14 +46,10 @@ PHP_MINIT_FUNCTION(azalea_sqlbuilder)
  */
 PHP_MSHUTDOWN_FUNCTION(azalea_sqlbuilder)
 {
-	/* uncomment this line if you have INI entries
-	UNREGISTER_INI_ENTRIES();
-	*/
 	return SUCCESS;
 }
 /* }}} */
 
-/* Remove if there's nothing to do at request start */
 /* {{{ PHP_RINIT_FUNCTION
  */
 PHP_RINIT_FUNCTION(azalea_sqlbuilder)
@@ -118,7 +61,6 @@ PHP_RINIT_FUNCTION(azalea_sqlbuilder)
 }
 /* }}} */
 
-/* Remove if there's nothing to do at request end */
 /* {{{ PHP_RSHUTDOWN_FUNCTION
  */
 PHP_RSHUTDOWN_FUNCTION(azalea_sqlbuilder)
@@ -132,23 +74,9 @@ PHP_RSHUTDOWN_FUNCTION(azalea_sqlbuilder)
 PHP_MINFO_FUNCTION(azalea_sqlbuilder)
 {
 	php_info_print_table_start();
-	php_info_print_table_header(2, "azalea_sqlbuilder support", "enabled");
+	php_info_print_table_row(2, "Version", PHP_AZALEA_SQLBUILDER_VERSION);
 	php_info_print_table_end();
-
-	/* Remove comments if you have entries in php.ini
-	DISPLAY_INI_ENTRIES();
-	*/
 }
-/* }}} */
-
-/* {{{ azalea_sqlbuilder_functions[]
- *
- * Every user visible function must have an entry in azalea_sqlbuilder_functions[].
- */
-const zend_function_entry azalea_sqlbuilder_functions[] = {
-	PHP_FE(confirm_azalea_sqlbuilder_compiled,	NULL)		/* For testing, remove later. */
-	PHP_FE_END	/* Must be the last line in azalea_sqlbuilder_functions[] */
-};
 /* }}} */
 
 /* {{{ azalea_sqlbuilder_module_entry
@@ -156,7 +84,7 @@ const zend_function_entry azalea_sqlbuilder_functions[] = {
 zend_module_entry azalea_sqlbuilder_module_entry = {
 	STANDARD_MODULE_HEADER,
 	"azalea_sqlbuilder",
-	azalea_sqlbuilder_functions,
+	NULL,
 	PHP_MINIT(azalea_sqlbuilder),
 	PHP_MSHUTDOWN(azalea_sqlbuilder),
 	PHP_RINIT(azalea_sqlbuilder),		/* Replace with NULL if there's nothing to do at request start */
