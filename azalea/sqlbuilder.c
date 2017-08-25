@@ -40,6 +40,7 @@ static zend_function_entry azalea_sqlbuilder_methods[] = {
 	PHP_ME(azalea_sqlbuilder, orNotWhereGroupStart, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, whereGroupEnd, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, select, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(azalea_sqlbuilder, count, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, distinct, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, from, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, join, NULL, ZEND_ACC_PUBLIC)
@@ -714,6 +715,36 @@ PHP_METHOD(azalea_sqlbuilder, select)
 		add_next_index_str(pSelect, php_trim(Z_STR_P(pData), ZEND_STRL(" "), 3));
 	} ZEND_HASH_FOREACH_END();
 	zval_ptr_dtor(ret);
+
+	RETURN_ZVAL(this, 1, 0);
+}
+/* }}} */
+
+/* {{{ proto count */
+PHP_METHOD(azalea_sqlbuilder, count)
+{
+	zval *this = getThis(), *pSelect;
+	zend_string *field = NULL, *alias = NULL, *value;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "|SS", &alias, &field) == FAILURE) {
+		return;
+	}
+
+	if (!field) {
+		field = zend_string_init(ZEND_STRL("1"), 0);
+	} else {
+		field = php_trim(field, ZEND_STRL(" "), 3);
+	}
+	pSelect = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_select"), 1, NULL);
+	if (alias) {
+		alias = php_trim(alias, ZEND_STRL(" "), 3);
+		value = strpprintf(0, "COUNT(%s) AS `%s`", ZSTR_VAL(field), ZSTR_VAL(alias));
+		zend_string_release(alias);
+	} else {
+		value = strpprintf(0, "COUNT(%s)", ZSTR_VAL(field));
+	}
+	add_next_index_str(pSelect, value);
+	zend_string_release(field);
 
 	RETURN_ZVAL(this, 1, 0);
 }

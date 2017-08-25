@@ -7,9 +7,6 @@
 #ifndef AZALEA_SQLBUILDER_H_
 #define AZALEA_SQLBUILDER_H_
 
-#define FROMTYPE_FROM 0  // from
-#define FROMTYPE_JOIN 1  // join
-
 #define WHERETYPE_WHERE  0	// where
 #define WHERETYPE_HAVING 1  // having
 
@@ -29,6 +26,7 @@ PHP_METHOD(azalea_sqlbuilder, notWhereGroupStart);
 PHP_METHOD(azalea_sqlbuilder, orNotWhereGroupStart);
 PHP_METHOD(azalea_sqlbuilder, whereGroupEnd);
 PHP_METHOD(azalea_sqlbuilder, select);
+PHP_METHOD(azalea_sqlbuilder, count);
 PHP_METHOD(azalea_sqlbuilder, distinct);
 PHP_METHOD(azalea_sqlbuilder, from);
 PHP_METHOD(azalea_sqlbuilder, join);
