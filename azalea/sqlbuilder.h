@@ -13,6 +13,12 @@
 #define BYTYPE_ORDER 0  // order by
 #define BYTYPE_GROUP 1  // group by
 
+#define SQLTYPE_SELECT  0  // select
+#define SQLTYPE_INSERT  1  // insert
+#define SQLTYPE_REPLACE 2  // replace
+#define SQLTYPE_UPDATE  5  // update
+#define SQLTYPE_DELETE  9  // delete
+
 ZEND_MODULE_STARTUP_D(main);
 
 PHP_METHOD(azalea_sqlbuilder, __construct);
@@ -34,6 +40,10 @@ PHP_METHOD(azalea_sqlbuilder, limit);
 PHP_METHOD(azalea_sqlbuilder, limitPage);
 PHP_METHOD(azalea_sqlbuilder, orderBy);
 PHP_METHOD(azalea_sqlbuilder, groupBy);
+PHP_METHOD(azalea_sqlbuilder, insert);
+PHP_METHOD(azalea_sqlbuilder, replace);
+PHP_METHOD(azalea_sqlbuilder, update);
+PHP_METHOD(azalea_sqlbuilder, delete);
 PHP_METHOD(azalea_sqlbuilder, getSql);
 PHP_METHOD(azalea_sqlbuilder, query);
 

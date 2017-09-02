@@ -48,6 +48,10 @@ static zend_function_entry azalea_sqlbuilder_methods[] = {
 	PHP_ME(azalea_sqlbuilder, limitPage, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, orderBy, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, groupBy, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(azalea_sqlbuilder, insert, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(azalea_sqlbuilder, replace, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(azalea_sqlbuilder, update, NULL, ZEND_ACC_PUBLIC)
+	PHP_ME(azalea_sqlbuilder, delete, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, getSql, NULL, ZEND_ACC_PUBLIC)
 	PHP_ME(azalea_sqlbuilder, query, NULL, ZEND_ACC_PUBLIC)
 	{NULL, NULL, NULL}
@@ -71,6 +75,7 @@ ZEND_MODULE_STARTUP_D(main)
 	sqlBuilderCe = zend_register_internal_class(&ce1);
 	sqlBuilderCe->ce_flags |= ZEND_ACC_FINAL;
 	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_queryInstance"), ZEND_ACC_PRIVATE);
+	zend_declare_property_long(sqlBuilderCe, ZEND_STRL("_type"), SQLTYPE_SELECT, ZEND_ACC_PRIVATE);
 	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_where"), ZEND_ACC_PRIVATE);
 	zend_declare_property_bool(sqlBuilderCe, ZEND_STRL("_whereGroupPrefix"), 0, ZEND_ACC_PRIVATE);
 	zend_declare_property_long(sqlBuilderCe, ZEND_STRL("_whereGroupDepth"), 0, ZEND_ACC_PRIVATE);
@@ -81,6 +86,10 @@ ZEND_MODULE_STARTUP_D(main)
 	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_by"), ZEND_ACC_PRIVATE);
 	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_limit"), ZEND_ACC_PRIVATE);
 	zend_declare_property_long(sqlBuilderCe, ZEND_STRL("_offset"), 0, ZEND_ACC_PRIVATE);
+	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_set"), ZEND_ACC_PRIVATE);
+	zend_declare_property_bool(sqlBuilderCe, ZEND_STRL("_ignore"), 0, ZEND_ACC_PRIVATE);
+	zend_declare_property_bool(sqlBuilderCe, ZEND_STRL("_duplicateKeyUpdate"), 0, ZEND_ACC_PRIVATE);
+	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_excludeFields"), ZEND_ACC_PRIVATE);
 
 	// Azalea\SqlBuilderQueryInterface
 	INIT_CLASS_ENTRY(ce2, AZALEA_NS_NAME(SqlBuilderQueryInterface), azalea_sqlbuilderqueryinterface_methods);
@@ -114,6 +123,15 @@ static void sqlBuilderReset(zval *this)
 	array_init(pValue);
 	zend_update_property_null(sqlBuilderCe, this, ZEND_STRL("_limit"));
 	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_offset"), 0);
+	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
+	zval_ptr_dtor(pValue);
+	array_init(pValue);
+	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_ignore"), 0);
+	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), 0);
+	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
+	zval_ptr_dtor(pValue);
+	array_init(pValue);
+	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_type"), SQLTYPE_SELECT);
 }
 /* }}} */
 
@@ -1023,92 +1041,365 @@ PHP_METHOD(azalea_sqlbuilder, groupBy)
 }
 /* }}} */
 
+/* {{{ proto sqlBuilderSet */
+void sqlBuilderSet(zval *this, zval *set)
+{
+	zval *pSet, *pData;
+	zend_string *key, *tstr;
+
+	pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
+	ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(set), key, pData) {
+		if (!key) {
+			continue;
+		}
+		zval value;
+		key = sqlBuilderEscapeStr(key);
+		if (Z_TYPE_P(pData) == IS_ARRAY) {
+			// escape & value
+			zval *escape, *pValue;
+			if (!(pValue = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("value")))) {
+				continue;
+			}
+			if ((escape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
+				convert_to_boolean(escape);
+			}
+			sqlBuilderEscapeEx(&value, pValue, !escape || Z_TYPE_P(escape) == IS_TRUE);
+			tstr = zend_string_copy(Z_STR(value));
+		} else {
+			// string
+			sqlBuilderEscapeEx(&value, pData, 1);
+			tstr = strpprintf(0, "\"%s\"", Z_STRVAL(value));
+		}
+		add_assoc_str_ex(pSet, ZSTR_VAL(key), ZSTR_LEN(key), tstr);
+		zend_string_release(key);
+		zval_ptr_dtor(&value);
+	} ZEND_HASH_FOREACH_END();
+}
+/* }}} */
+
+/* {{{ proto insert */
+PHP_METHOD(azalea_sqlbuilder, insert)
+{
+	zval *set, *this = getThis(), *excludeFields, from, *pSet, *pExcludeFields, *pData;
+	zend_bool ignoreErrors = 0, duplicateKeyUpdate = 0;
+	zend_string *tableName;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "Sa|bbz", &tableName, &set, &ignoreErrors, &duplicateKeyUpdate, &excludeFields) == FAILURE) {
+		return;
+	}
+	// reset
+	sqlBuilderReset(this);
+	// from
+	ZVAL_STR(&from, zend_string_copy(tableName));
+	sqlBuilderFrom(this, &from, NULL, NULL);
+	zval_ptr_dtor(&from);
+	// set
+	sqlBuilderSet(this, set);
+	// exclude
+	if (excludeFields && Z_TYPE_P(excludeFields) == IS_ARRAY) {
+		pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
+		pExcludeFields = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
+		ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(excludeFields), pData) {
+			if (Z_TYPE_P(pData) != IS_STRING) {
+				continue;
+			}
+			if (zend_hash_str_exists(Z_ARRVAL_P(pSet), Z_STRVAL_P(pData), Z_STRLEN_P(pData))) {
+				// 排除字段存在 _set 中
+				add_next_index_zval(pExcludeFields, pData);
+				zval_add_ref(pData);
+			}
+		} ZEND_HASH_FOREACH_END();
+	}
+	// others
+	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_type"), SQLTYPE_INSERT);
+	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_ignore"), ignoreErrors);
+	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), duplicateKeyUpdate);
+
+	RETURN_ZVAL(this, 1, 0);
+}
+/* }}} */
+
+/* {{{ proto replace */
+PHP_METHOD(azalea_sqlbuilder, replace)
+{
+	zval *set, *this = getThis(), from;
+	zend_string *tableName;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "Sa", &tableName, &set) == FAILURE) {
+		return;
+	}
+	// reset
+	sqlBuilderReset(this);
+	// from
+	ZVAL_STR(&from, zend_string_copy(tableName));
+	sqlBuilderFrom(this, &from, NULL, NULL);
+	zval_ptr_dtor(&from);
+	// set
+	sqlBuilderSet(this, set);
+	// others
+	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_type"), SQLTYPE_REPLACE);
+
+	RETURN_ZVAL(this, 1, 0);
+}
+/* }}} */
+
+/* {{{ proto sqlBuilderUpdateDeleteWhere */
+void sqlBuilderUpdateDeleteWhere(zval *this, zval *where)
+{
+	zval zKey, *pData;
+	zend_string *key;
+
+	ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(where), key, pData) {
+		if (!key) {
+			continue;
+		}
+		ZVAL_STR(&zKey, zend_string_copy(key));
+		if (Z_TYPE_P(pData) == IS_ARRAY) {
+			// escape & value
+			zval *escape, *pValue;
+			if (!(pValue = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("value")))) {
+				pValue = pData;
+			}
+			if ((escape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
+				convert_to_boolean(escape);
+			}
+			sqlBuilderWhere(this, WHERETYPE_WHERE, &zKey, pValue, "AND", !escape || Z_TYPE_P(escape) == IS_TRUE);
+		} else {
+			// string
+			sqlBuilderWhere(this, WHERETYPE_WHERE, &zKey, pData, "AND", 1);
+		}
+		zval_ptr_dtor(&zKey);
+	} ZEND_HASH_FOREACH_END();
+}
+/* }}} */
+
+/* {{{ proto update */
+PHP_METHOD(azalea_sqlbuilder, update)
+{
+	zval *set, *where = NULL, *this = getThis(), from;
+	zend_string *tableName;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "Sa|a", &tableName, &set, &where) == FAILURE) {
+		return;
+	}
+	// reset
+	sqlBuilderReset(this);
+	// from
+	ZVAL_STR(&from, zend_string_copy(tableName));
+	sqlBuilderFrom(this, &from, NULL, NULL);
+	zval_ptr_dtor(&from);
+	// set
+	sqlBuilderSet(this, set);
+	// where
+	if (where) {
+		sqlBuilderUpdateDeleteWhere(this, where);
+	}
+	// others
+	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_type"), SQLTYPE_UPDATE);
+
+	RETURN_ZVAL(this, 1, 0);
+}
+/* }}} */
+
+/* {{{ proto delete */
+PHP_METHOD(azalea_sqlbuilder, delete)
+{
+	zval *where = NULL, *this = getThis(), from, zKey, *pData;
+	zend_string *tableName, *key;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "S|a", &tableName, &where) == FAILURE) {
+		return;
+	}
+	// reset
+	sqlBuilderReset(this);
+	// from
+	ZVAL_STR(&from, zend_string_copy(tableName));
+	sqlBuilderFrom(this, &from, NULL, NULL);
+	zval_ptr_dtor(&from);
+	// where
+	if (where) {
+		sqlBuilderUpdateDeleteWhere(this, where);
+	}
+	// others
+	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_type"), SQLTYPE_DELETE);
+
+	RETURN_ZVAL(this, 1, 0);
+}
+/* }}} */
+
 /* {{{ sqlBuilderCompileSql */
 static zend_string * sqlBuilderCompileSql(zval *this)
 {
-	zval *pParentNode, *pValue, dummy;
+	zval *pParentNode, *pValue, *pSet, *pData, setValues, dummy;
 	smart_str buf = {0}, *sql = &buf;
-	zend_string *tstr, *delimComma, *delimSpace, *ret;
+	zend_string *tstr, *delimComma, *delimSpace, *key, *ret;
+	zend_long sqlType;
 
 	delimComma = zend_string_init(ZEND_STRL(","), 0);
 	delimSpace = zend_string_init(ZEND_STRL(" "), 0);
-	smart_str_appendl_ex(sql, ZEND_STRL("SELECT"), 0);
-	// distinct
-	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_distinct"), 1, NULL);
-	if (Z_TYPE_P(pValue) == IS_TRUE) {
-		smart_str_appendl_ex(sql, ZEND_STRL(" DISTINCT"), 0);
-	}
-	// select
-	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_select"), 1, NULL);
-	if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
-		zval dummy;
-		php_implode(delimComma, pValue, &dummy);
-		smart_str_appendc(sql, ' ');
-		smart_str_append(sql, Z_STR(dummy));
-		zval_ptr_dtor(&dummy);
-	} else {
-		smart_str_appendl_ex(sql, ZEND_STRL(" *"), 0);
-	}
-	// from
-	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_from"), 1, NULL);
-	if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
-		zval dummy;
-		php_implode(delimComma, pValue, &dummy);
-		smart_str_appendl_ex(sql, ZEND_STRL(" FROM "), 0);
-		smart_str_append(sql, Z_STR(dummy));
-		zval_ptr_dtor(&dummy);
-	}
-	// join
-	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_join"), 1, NULL);
-	if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
-		zval dummy;
-		php_implode(delimSpace, pValue, &dummy);
-		smart_str_appendc(sql, ' ');
-		smart_str_append(sql, Z_STR(dummy));
-		zval_ptr_dtor(&dummy);
-	}
-	// where
-	tstr = sqlBuilderCompileWhere(this, WHERETYPE_WHERE);
-	if (tstr && ZSTR_LEN(tstr)) {
-		smart_str_appendl_ex(sql, ZEND_STRL(" WHERE "), 0);
-		smart_str_append(sql, tstr);
-		zend_string_release(tstr);
-	}
-	// groupby
-	pParentNode = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_by"), 1, NULL);
-	pValue = zend_hash_index_find(Z_ARRVAL_P(pParentNode), BYTYPE_GROUP);
-	if (pValue && Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
-		php_implode(delimComma, pValue, &dummy);
-		smart_str_appendl_ex(sql, ZEND_STRL(" GROUP BY "), 0);
-		smart_str_append(sql, Z_STR(dummy));
-		zval_ptr_dtor(&dummy);
-	}
-	// orderby
-	pValue = zend_hash_index_find(Z_ARRVAL_P(pParentNode), BYTYPE_ORDER);
-	if (pValue && Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
-		php_implode(delimComma, pValue, &dummy);
-		smart_str_appendl_ex(sql, ZEND_STRL(" ORDER BY "), 0);
-		smart_str_append(sql, Z_STR(dummy));
-		zval_ptr_dtor(&dummy);
-	}
-	// having
-	tstr = sqlBuilderCompileWhere(this, WHERETYPE_HAVING);
-	if (tstr && ZSTR_LEN(tstr)) {
-		smart_str_appendl_ex(sql, ZEND_STRL(" HAVING "), 0);
-		smart_str_append(sql, tstr);
-		zend_string_release(tstr);
-	}
-	// limit & offset
-	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_limit"), 1, NULL);
-	if (Z_TYPE_P(pValue) == IS_LONG) {
-		zend_long limit = Z_LVAL_P(pValue);
-		smart_str_appendl_ex(sql, ZEND_STRL(" LIMIT "), 0);
-		pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_offset"), 1, NULL);
-		if (Z_TYPE_P(pValue) == IS_LONG && Z_LVAL_P(pValue) > 0) {
-			smart_str_append_long(sql, Z_LVAL_P(pValue));
-			smart_str_appendc(sql, ',');
-		}
-		smart_str_append_long(sql, limit);
+	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_type"), 1, NULL);
+	sqlType = Z_LVAL_P(pValue);
+	// 生成不同类型的 SQL
+	switch (sqlType) {
+		case SQLTYPE_INSERT:
+		case SQLTYPE_REPLACE:
+		case SQLTYPE_UPDATE:
+			if (sqlType == SQLTYPE_INSERT) {
+				smart_str_appendl_ex(sql, ZEND_STRL("INSERT"), 0);
+				// ignore
+				pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_ignore"), 1, NULL);
+				if (Z_TYPE_P(pValue) == IS_TRUE) {
+					smart_str_appendl_ex(sql, ZEND_STRL(" IGNORE"), 0);
+				}
+			} else if (sqlType == SQLTYPE_REPLACE) {
+				smart_str_appendl_ex(sql, ZEND_STRL("REPLACE"), 0);
+			} else {
+				smart_str_appendl_ex(sql, ZEND_STRL("UPDATE "), 0);
+				goto _from;
+			}
+			smart_str_appendl_ex(sql, ZEND_STRL(" INTO "), 0);
+_from:
+			// from
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_from"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+			smart_str_appendl_ex(sql, ZEND_STRL(" SET"), 0);
+			// set
+			pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
+			if (Z_TYPE_P(pSet) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pSet)) > 0) {
+				array_init(&setValues);
+				ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(pSet), key, pData) {
+					key = sqlBuilderEscapeKeyword(key);
+					tstr = strpprintf(0, " %s = %s", ZSTR_VAL(key), Z_STRVAL_P(pData));
+					add_next_index_str(&setValues, tstr);
+					zend_string_release(key);
+				} ZEND_HASH_FOREACH_END();
+				php_implode(delimComma, &setValues, &dummy);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&setValues);
+				zval_ptr_dtor(&dummy);
+			}
+			if (sqlType == SQLTYPE_INSERT) {
+				// onDuplicateKeyUpdate
+				pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), 1, NULL);
+				if (Z_TYPE_P(pValue) == IS_TRUE) {
+					pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
+					if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) < zend_hash_num_elements(Z_ARRVAL_P(pSet))) {
+						smart_str_appendl_ex(sql, ZEND_STRL(" ON DUPLICATE KEY UPDATE"), 0);
+						array_init(&setValues);
+						ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(pValue), pData) {
+							key = sqlBuilderEscapeKeyword(Z_STR_P(pData));
+							tstr = strpprintf(0, " %s = VALUES(%s)", ZSTR_VAL(key), ZSTR_VAL(key));
+							add_next_index_str(&setValues, tstr);
+							zend_string_release(key);
+						} ZEND_HASH_FOREACH_END();
+						php_implode(delimComma, &setValues, &dummy);
+						smart_str_append(sql, Z_STR(dummy));
+						zval_ptr_dtor(&setValues);
+						zval_ptr_dtor(&dummy);
+					}
+				}
+			} else if (sqlType == SQLTYPE_UPDATE) {
+				goto _where;
+			}
+			break;
+		case SQLTYPE_DELETE:
+			smart_str_appendl_ex(sql, ZEND_STRL("DELETE FROM "), 0);
+			// from
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_from"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+_where:
+			// where
+			tstr = sqlBuilderCompileWhere(this, WHERETYPE_WHERE);
+			if (tstr && ZSTR_LEN(tstr)) {
+				smart_str_appendl_ex(sql, ZEND_STRL(" WHERE "), 0);
+				smart_str_append(sql, tstr);
+				zend_string_release(tstr);
+			}
+			break;
+		default:
+			smart_str_appendl_ex(sql, ZEND_STRL("SELECT"), 0);
+			// distinct
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_distinct"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_TRUE) {
+				smart_str_appendl_ex(sql, ZEND_STRL(" DISTINCT"), 0);
+			}
+			// select
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_select"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_appendc(sql, ' ');
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			} else {
+				smart_str_appendl_ex(sql, ZEND_STRL(" *"), 0);
+			}
+			// from
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_from"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_appendl_ex(sql, ZEND_STRL(" FROM "), 0);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+			// join
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_join"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimSpace, pValue, &dummy);
+				smart_str_appendc(sql, ' ');
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+			// where
+			tstr = sqlBuilderCompileWhere(this, WHERETYPE_WHERE);
+			if (tstr && ZSTR_LEN(tstr)) {
+				smart_str_appendl_ex(sql, ZEND_STRL(" WHERE "), 0);
+				smart_str_append(sql, tstr);
+				zend_string_release(tstr);
+			}
+			// groupby
+			pParentNode = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_by"), 1, NULL);
+			pValue = zend_hash_index_find(Z_ARRVAL_P(pParentNode), BYTYPE_GROUP);
+			if (pValue && Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_appendl_ex(sql, ZEND_STRL(" GROUP BY "), 0);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+			// orderby
+			pValue = zend_hash_index_find(Z_ARRVAL_P(pParentNode), BYTYPE_ORDER);
+			if (pValue && Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_appendl_ex(sql, ZEND_STRL(" ORDER BY "), 0);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+			// having
+			tstr = sqlBuilderCompileWhere(this, WHERETYPE_HAVING);
+			if (tstr && ZSTR_LEN(tstr)) {
+				smart_str_appendl_ex(sql, ZEND_STRL(" HAVING "), 0);
+				smart_str_append(sql, tstr);
+				zend_string_release(tstr);
+			}
+			// limit & offset
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_limit"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_LONG) {
+				zend_long limit = Z_LVAL_P(pValue);
+				smart_str_appendl_ex(sql, ZEND_STRL(" LIMIT "), 0);
+				pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_offset"), 1, NULL);
+				if (Z_TYPE_P(pValue) == IS_LONG && Z_LVAL_P(pValue) > 0) {
+					smart_str_append_long(sql, Z_LVAL_P(pValue));
+					smart_str_appendc(sql, ',');
+				}
+				smart_str_append_long(sql, limit);
+			}
 	}
 	smart_str_0(sql);
 	ret = zend_string_copy(buf.s);
