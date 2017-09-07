@@ -1457,3 +1457,17 @@ PHP_METHOD(azalea_sqlbuilder, query)
 	RETURN_FALSE;
 }
 /* }}} */
+
+/* {{{ */
+zend_class_entry *azaleaSqlBuilderGetCe(void)
+{
+	return sqlBuilderCe;
+}
+/* }}} */
+
+/* {{{ */
+zend_class_entry *azaleaSqlBuilderGetInterfaceCe(void)
+{
+	return sqlBuilderQueryInterfaceCe;
+}
+/* }}} */
