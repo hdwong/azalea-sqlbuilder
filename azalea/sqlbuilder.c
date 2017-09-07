@@ -175,7 +175,7 @@ zend_string * sqlBuilderEscapeStr(zend_string *val)
 	if (lenResult == len) {
 		ret = zend_string_copy(val);
 	} else {
-		ret = zend_string_init(result, len, 0);
+		ret = zend_string_init(result, lenResult, 0);
 	}
 	efree(result);
 	return ret;
