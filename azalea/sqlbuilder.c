@@ -145,25 +145,22 @@ zend_string * sqlBuilderEscapeStr(zend_string *val)
 	result = emalloc(len * 2);	// 最多为原字符串2倍长度
 	pResult = result;
 	for (i = 0; i < len; ++i) {
-		if (*p == '\\' || *p == '"' || *p == '\'') {
+		if (*p == '\\' || *p == '"' || *p == '\'' || *p == '\0' || *p == '\r' ||
+				*p == '\n' || *p == '\t' || *p == '\f') {
 			*pResult++ = '\\';
-			*pResult++ = *p;
-			lenResult += 2;
-		} else if (*p == '\0') {
-			*pResult++ = '\\';
-			*pResult++ = '0';
-			lenResult += 2;
-		} else if (*p == '\t') {
-			*pResult++ = '\\';
-			*pResult++ = 't';
-			lenResult += 2;
-		} else if (*p == '\r') {
-			*pResult++ = '\\';
-			*pResult++ = 'r';
-			lenResult += 2;
-		} else if (*p == '\n') {
-			*pResult++ = '\\';
-			*pResult++ = 'n';
+			if (*p == '\0') {
+				*pResult++ = '0';
+			} else if (*p == '\r') {
+				*pResult++ = 'r';
+			} else if (*p == '\n') {
+				*pResult++ = 'n';
+			} else if (*p == '\t') {
+				*pResult++ = 't';
+			} else if (*p == '\f') {
+				*pResult++ = 'f';
+			} else {
+				*pResult++ = *p;
+			}
 			lenResult += 2;
 		} else {
 			*pResult++ = *p;
