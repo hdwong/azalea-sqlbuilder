@@ -140,34 +140,39 @@ zend_string * sqlBuilderEscapeStr(zend_string *val)
 {
 	zend_string *ret;
 	char *result, *pResult, *p = ZSTR_VAL(val);
-	size_t len = 0;
+	size_t lenResult = 0, len = ZSTR_LEN(val), i;
 
-	result = ecalloc(sizeof(char), ZSTR_LEN(val) * 2);
+	result = emalloc(len * 2);	// 最多为原字符串2倍长度
 	pResult = result;
-	while (*p) {
+	for (i = 0; i < len; ++i) {
 		if (*p == '\\' || *p == '"' || *p == '\'') {
 			*pResult++ = '\\';
 			*pResult++ = *p;
-			len += 2;
+			lenResult += 2;
 		} else if (*p == '\0') {
 			*pResult++ = '\\';
 			*pResult++ = '0';
-			len += 2;
+			lenResult += 2;
+		} else if (*p == '\t') {
+			*pResult++ = '\\';
+			*pResult++ = 't';
+			lenResult += 2;
 		} else if (*p == '\r') {
 			*pResult++ = '\\';
 			*pResult++ = 'r';
-			len += 2;
+			lenResult += 2;
 		} else if (*p == '\n') {
 			*pResult++ = '\\';
 			*pResult++ = 'n';
-			len += 2;
+			lenResult += 2;
 		} else {
 			*pResult++ = *p;
-			++len;
+			++lenResult;
 		}
 		++p;
 	}
-	if (len == ZSTR_LEN(val)) {
+
+	if (lenResult == len) {
 		ret = zend_string_copy(val);
 	} else {
 		ret = zend_string_init(result, len, 0);
