@@ -215,19 +215,9 @@ void sqlBuilderEscapeEx(zval *return_value, zval *val, zend_bool escapeValue)
 				RETURN_ZVAL(val, 1, 0);
 			}
 			return;
-		case IS_LONG:
-		case IS_DOUBLE:
-			RETVAL_ZVAL(val, 1, 0);
-			convert_to_string(return_value);
-			return;
-		case IS_TRUE:
-			RETURN_STRINGL("1", 1);
-		case IS_FALSE:
-			RETURN_STRINGL("0", 1);
-		case IS_NULL:
-			RETURN_NULL();
+		default:
+			RETURN_STR(zval_get_string(val));
 	}
-	RETURN_FALSE;
 }
 /* }}} */
 
