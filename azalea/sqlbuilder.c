@@ -215,6 +215,9 @@ void sqlBuilderEscapeEx(zval *return_value, zval *val, zend_bool escapeValue)
 				RETURN_ZVAL(val, 1, 0);
 			}
 			return;
+		case IS_NULL:
+			// for IS NULL syntax
+			RETURN_NULL();
 		default:
 			RETURN_STR(zval_get_string(val));
 	}
