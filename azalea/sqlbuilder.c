@@ -1048,22 +1048,31 @@ void sqlBuilderSet(zval *this, zval *set)
 			continue;
 		}
 		zval value;
+		zend_bool escapeValue = 1;
 		key = sqlBuilderEscapeStr(key);
 		if (Z_TYPE_P(pData) == IS_ARRAY) {
 			// escape & value
-			zval *escape, *pValue;
+			zval *pEscape, *pValue;
 			if (!(pValue = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("value")))) {
 				continue;
 			}
-			if ((escape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
-				convert_to_boolean(escape);
+			if ((pEscape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
+				escapeValue = zval_is_true(pEscape);
 			}
-			sqlBuilderEscapeEx(&value, pValue, !escape || Z_TYPE_P(escape) == IS_TRUE);
-			tstr = zend_string_copy(Z_STR(value));
+			sqlBuilderEscapeEx(&value, pValue, escapeValue);
 		} else {
 			// string
 			sqlBuilderEscapeEx(&value, pData, 1);
-			tstr = strpprintf(0, "\"%s\"", Z_STRVAL(value));
+		}
+		if (Z_TYPE(value) == IS_NULL) {
+			// for set NULL syntax
+			tstr = zend_string_init(ZEND_STRL("NULL"), 0);
+		} else {
+			if (escapeValue) {
+				tstr = strpprintf(0, "\"%s\"", Z_STRVAL(value));
+			} else {
+				tstr = zend_string_dup(Z_STR(value), 0);
+			}
 		}
 		add_assoc_str_ex(pSet, ZSTR_VAL(key), ZSTR_LEN(key), tstr);
 		zend_string_release(key);
