@@ -1041,6 +1041,7 @@ void sqlBuilderSet(zval *this, zval *set)
 {
 	zval *pSet, *pData;
 	zend_string *key, *tstr;
+	zend_bool escapeValue;
 
 	pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
 	ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(set), key, pData) {
@@ -1048,7 +1049,7 @@ void sqlBuilderSet(zval *this, zval *set)
 			continue;
 		}
 		zval value;
-		zend_bool escapeValue = 1;
+		escapeValue = 1;
 		key = sqlBuilderEscapeStr(key);
 		if (Z_TYPE_P(pData) == IS_ARRAY) {
 			// escape & value
@@ -1062,7 +1063,7 @@ void sqlBuilderSet(zval *this, zval *set)
 			sqlBuilderEscapeEx(&value, pValue, escapeValue);
 		} else {
 			// string
-			sqlBuilderEscapeEx(&value, pData, 1);
+			sqlBuilderEscapeEx(&value, pData, escapeValue);
 		}
 		if (Z_TYPE(value) == IS_NULL) {
 			// for set NULL syntax
@@ -1152,25 +1153,27 @@ void sqlBuilderUpdateDeleteWhere(zval *this, zval *where)
 {
 	zval zKey, *pData;
 	zend_string *key;
+	zend_bool escapeValue;
 
 	ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(where), key, pData) {
 		if (!key) {
 			continue;
 		}
 		ZVAL_STR(&zKey, zend_string_copy(key));
+		escapeValue = 1;
 		if (Z_TYPE_P(pData) == IS_ARRAY) {
 			// escape & value
-			zval *escape, *pValue;
+			zval *pEscape, *pValue;
 			if (!(pValue = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("value")))) {
 				pValue = pData;
 			}
-			if ((escape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
-				convert_to_boolean(escape);
+			if ((pEscape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
+				escapeValue = zval_is_true(pEscape);
 			}
-			sqlBuilderWhere(this, WHERETYPE_WHERE, &zKey, pValue, "AND", !escape || Z_TYPE_P(escape) == IS_TRUE);
+			sqlBuilderWhere(this, WHERETYPE_WHERE, &zKey, pValue, "AND", escapeValue);
 		} else {
 			// string
-			sqlBuilderWhere(this, WHERETYPE_WHERE, &zKey, pData, "AND", 1);
+			sqlBuilderWhere(this, WHERETYPE_WHERE, &zKey, pData, "AND", escapeValue);
 		}
 		zval_ptr_dtor(&zKey);
 	} ZEND_HASH_FOREACH_END();
