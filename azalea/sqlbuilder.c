@@ -1240,7 +1240,7 @@ static zend_string * sqlBuilderCompileSql(zval *this)
 	zval *pParentNode, *pValue, *pSet, *pData, setValues, dummy;
 	smart_str buf = {0}, *sql = &buf;
 	zend_string *tstr, *delimComma, *delimSpace, *key, *ret;
-	zend_long sqlType;
+	zend_long sqlType, excludedContinue;
 
 	delimComma = zend_string_init(ZEND_STRL(","), 0);
 	delimSpace = zend_string_init(ZEND_STRL(" "), 0);
@@ -1293,12 +1293,29 @@ _from:
 				// onDuplicateKeyUpdate
 				pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), 1, NULL);
 				if (Z_TYPE_P(pValue) == IS_TRUE) {
-					pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
-					if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) < zend_hash_num_elements(Z_ARRVAL_P(pSet))) {
+					zval *pExcludeFields;
+					pExcludeFields = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
+					if (Z_TYPE_P(pExcludeFields) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pExcludeFields)) < zend_hash_num_elements(Z_ARRVAL_P(pSet))) {
 						smart_str_appendl_ex(sql, ZEND_STRL(" ON DUPLICATE KEY UPDATE"), 0);
 						array_init(&setValues);
-						ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(pValue), pData) {
-							key = sqlBuilderEscapeKeyword(Z_STR_P(pData));
+						ZEND_HASH_FOREACH_STR_KEY(Z_ARRVAL_P(pSet), key) {
+							if (!key) {
+								continue;
+							}
+							excludedContinue = 0;
+							ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(pExcludeFields), pData) {
+								tstr = zval_get_string(pData);
+								if (ZSTR_VAL(key) == ZSTR_VAL(tstr) || (ZSTR_LEN(key) == ZSTR_LEN(tstr) && memcmp(ZSTR_VAL(key), ZSTR_VAL(tstr), ZSTR_LEN(key)) == 0)) {
+									// 在排除列表里，不执行 update 操作
+									excludedContinue = 1;
+									break;
+								}
+							} ZEND_HASH_FOREACH_END();
+							if (excludedContinue) {
+								// 跳过循环
+								continue;
+							}
+							key = sqlBuilderEscapeKeyword(key);
 							tstr = strpprintf(0, " %s = VALUES(%s)", ZSTR_VAL(key), ZSTR_VAL(key));
 							add_next_index_str(&setValues, tstr);
 							zend_string_release(key);
