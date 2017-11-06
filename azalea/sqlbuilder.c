@@ -487,10 +487,20 @@ void sqlBuilderWhere(zval *this, zend_long whereType, zval *conditions, zval *va
 		return;
 	}
 	if (Z_TYPE_P(conditions) == IS_STRING) {
-		array_init(&cond);
-		add_assoc_zval_ex(&cond, Z_STRVAL_P(conditions), Z_STRLEN_P(conditions), value);
-		zval_add_ref(value);
-		conditions = &cond;
+		if (value) {
+			array_init(&cond);
+			add_assoc_zval_ex(&cond, Z_STRVAL_P(conditions), Z_STRLEN_P(conditions), value);
+			zval_add_ref(value);
+			conditions = &cond;
+		} else {
+			// 直接加入 pWhere
+			// 获取 where 前缀
+			wherePrefix = sqlBuilderGetWherePrefix(Z_TYPE_P(pWhereGroupPrefix) == IS_TRUE, pWhere, pType);
+			segment = strpprintf(0, "%s%s", ZSTR_VAL(wherePrefix), Z_STRVAL_P(conditions));
+			add_next_index_str(pWhere, segment);
+			ZVAL_TRUE(pWhereGroupPrefix);
+			return;
+		}
 	} else {
 		zval_add_ref(conditions);
 	}
@@ -596,7 +606,7 @@ PHP_METHOD(azalea_sqlbuilder, __construct)
 /* {{{ proto where */
 PHP_METHOD(azalea_sqlbuilder, where)
 {
-	zval *conditions, *value, *this = getThis();
+	zval *conditions, *value = NULL, *this = getThis();
 	zend_bool escapeValue = 1;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z|zb", &conditions, &value, &escapeValue) == FAILURE) {
@@ -611,7 +621,7 @@ PHP_METHOD(azalea_sqlbuilder, where)
 /* {{{ proto orWhere */
 PHP_METHOD(azalea_sqlbuilder, orWhere)
 {
-	zval *conditions, *value, *this = getThis();
+	zval *conditions, *value = NULL, *this = getThis();
 	zend_bool escapeValue = 1;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z|zb", &conditions, &value, &escapeValue) == FAILURE) {
@@ -626,7 +636,7 @@ PHP_METHOD(azalea_sqlbuilder, orWhere)
 /* {{{ proto having */
 PHP_METHOD(azalea_sqlbuilder, having)
 {
-	zval *conditions, *value, *this = getThis();
+	zval *conditions, *value = NULL, *this = getThis();
 	zend_bool escapeValue = 1;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z|zb", &conditions, &value, &escapeValue) == FAILURE) {
@@ -641,7 +651,7 @@ PHP_METHOD(azalea_sqlbuilder, having)
 /* {{{ proto orHaving */
 PHP_METHOD(azalea_sqlbuilder, orHaving)
 {
-	zval *conditions, *value, *this = getThis();
+	zval *conditions, *value = NULL, *this = getThis();
 	zend_bool escapeValue = 1;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z|zb", &conditions, &value, &escapeValue) == FAILURE) {
