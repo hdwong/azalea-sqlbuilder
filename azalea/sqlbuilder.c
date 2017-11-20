@@ -1095,7 +1095,7 @@ void sqlBuilderSet(zval *this, zval *set)
 /* {{{ proto insert */
 PHP_METHOD(azalea_sqlbuilder, insert)
 {
-	zval *set, *this = getThis(), *excludeFields, from, *pSet, *pExcludeFields, *pData;
+	zval *set, *this = getThis(), *excludeFields = NULL, from, *pSet, *pExcludeFields, *pData;
 	zend_bool ignoreErrors = 0, duplicateKeyUpdate = 0;
 	zend_string *tableName;
 
