@@ -88,6 +88,7 @@ ZEND_MODULE_STARTUP_D(main)
 	zend_declare_property_long(sqlBuilderCe, ZEND_STRL("_offset"), 0, ZEND_ACC_PRIVATE);
 	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_set"), ZEND_ACC_PRIVATE);
 	zend_declare_property_bool(sqlBuilderCe, ZEND_STRL("_ignore"), 0, ZEND_ACC_PRIVATE);
+	zend_declare_property_bool(sqlBuilderCe, ZEND_STRL("_bulks"), 0, ZEND_ACC_PRIVATE);
 	zend_declare_property_bool(sqlBuilderCe, ZEND_STRL("_duplicateKeyUpdate"), 0, ZEND_ACC_PRIVATE);
 	zend_declare_property_null(sqlBuilderCe, ZEND_STRL("_excludeFields"), ZEND_ACC_PRIVATE);
 
@@ -127,6 +128,7 @@ static void sqlBuilderReset(zval *this)
 	zval_ptr_dtor(pValue);
 	array_init(pValue);
 	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_ignore"), 0);
+	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_bulks"), 0);
 	zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), 0);
 	pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
 	zval_ptr_dtor(pValue);
@@ -1046,14 +1048,12 @@ PHP_METHOD(azalea_sqlbuilder, groupBy)
 }
 /* }}} */
 
-/* {{{ proto sqlBuilderSet */
-void sqlBuilderSet(zval *this, zval *set)
+static void _addToSet(zval *pSet, zval *set)
 {
-	zval *pSet, *pData;
-	zend_string *key, *tstr;
 	zend_bool escapeValue;
+	zval *pData;
+	zend_string *key, *tstr;
 
-	pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
 	ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(set), key, pData) {
 		if (!key) {
 			continue;
@@ -1090,6 +1090,32 @@ void sqlBuilderSet(zval *this, zval *set)
 		zval_ptr_dtor(&value);
 	} ZEND_HASH_FOREACH_END();
 }
+
+/* {{{ proto sqlBuilderSet */
+static void sqlBuilderSet(zval *this, zval *set, zend_bool isInsert)
+{
+	zval *pSet, *pData;
+	zend_string *key;
+
+	pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
+	if (isInsert && zend_hash_get_current_key_type(Z_ARRVAL_P(set)) == HASH_KEY_IS_LONG) {
+		// 自然数组，批量插入
+		ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(set), key, pData) {
+			zval row;
+			if (key) {
+				// 跳过键值对
+				continue;
+			}
+			array_init(&row);
+			_addToSet(&row, pData);
+			add_next_index_zval(pSet, &row);
+		} ZEND_HASH_FOREACH_END();
+		zend_update_property_bool(sqlBuilderCe, this, ZEND_STRL("_bulks"), 1);
+	} else {
+		// 键值对数组
+		_addToSet(pSet, set);
+	}
+}
 /* }}} */
 
 /* {{{ proto insert */
@@ -1109,7 +1135,7 @@ PHP_METHOD(azalea_sqlbuilder, insert)
 	sqlBuilderFrom(this, &from, NULL, NULL);
 	zval_ptr_dtor(&from);
 	// set
-	sqlBuilderSet(this, set);
+	sqlBuilderSet(this, set, 1);
 	// exclude
 	if (excludeFields && Z_TYPE_P(excludeFields) == IS_ARRAY) {
 		pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
@@ -1150,7 +1176,7 @@ PHP_METHOD(azalea_sqlbuilder, replace)
 	sqlBuilderFrom(this, &from, NULL, NULL);
 	zval_ptr_dtor(&from);
 	// set
-	sqlBuilderSet(this, set);
+	sqlBuilderSet(this, set, 1);
 	// others
 	zend_update_property_long(sqlBuilderCe, this, ZEND_STRL("_type"), SQLTYPE_REPLACE);
 
@@ -1206,7 +1232,7 @@ PHP_METHOD(azalea_sqlbuilder, update)
 	sqlBuilderFrom(this, &from, NULL, NULL);
 	zval_ptr_dtor(&from);
 	// set
-	sqlBuilderSet(this, set);
+	sqlBuilderSet(this, set, 0);
 	// where
 	if (where) {
 		sqlBuilderUpdateDeleteWhere(this, where);
@@ -1247,7 +1273,7 @@ PHP_METHOD(azalea_sqlbuilder, delete)
 /* {{{ sqlBuilderCompileSql */
 static zend_string * sqlBuilderCompileSql(zval *this)
 {
-	zval *pParentNode, *pValue, *pSet, *pData, setValues, dummy;
+	zval *pParentNode, *pValue, *pBulks, *pSet, *pData, setValues, dummy;
 	smart_str buf = {0}, *sql = &buf;
 	zend_string *tstr, *delimComma, *delimSpace, *key, *ret;
 	zend_long sqlType, excludedContinue;
@@ -1260,7 +1286,6 @@ static zend_string * sqlBuilderCompileSql(zval *this)
 	switch (sqlType) {
 		case SQLTYPE_INSERT:
 		case SQLTYPE_REPLACE:
-		case SQLTYPE_UPDATE:
 			if (sqlType == SQLTYPE_INSERT) {
 				smart_str_appendl_ex(sql, ZEND_STRL("INSERT"), 0);
 				// ignore
@@ -1270,12 +1295,104 @@ static zend_string * sqlBuilderCompileSql(zval *this)
 				}
 			} else if (sqlType == SQLTYPE_REPLACE) {
 				smart_str_appendl_ex(sql, ZEND_STRL("REPLACE"), 0);
-			} else {
-				smart_str_appendl_ex(sql, ZEND_STRL("UPDATE "), 0);
-				goto _from;
 			}
 			smart_str_appendl_ex(sql, ZEND_STRL(" INTO "), 0);
-_from:
+			// from
+			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_from"), 1, NULL);
+			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
+				php_implode(delimComma, pValue, &dummy);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+			}
+			// set
+			pSet = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_set"), 1, NULL);
+			pBulks = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_bulks"), 1, NULL);
+			if (Z_TYPE_P(pSet) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pSet)) > 0) {
+				zval newSet, *row, keys, values;
+				zval_add_ref(pSet);
+				ulong num;
+				if (Z_TYPE_P(pBulks) != IS_TRUE) {
+					array_init(&newSet);
+					add_next_index_zval(&newSet, pSet);
+					pSet = &newSet;
+				}
+				array_init(&keys);
+				array_init(&setValues);
+				ZEND_HASH_FOREACH_NUM_KEY_VAL(Z_ARRVAL_P(pSet), num, row) {
+					// 第一个循环 set 集
+					if (Z_TYPE_P(row) != IS_ARRAY || !zend_hash_num_elements(Z_ARRVAL_P(row))) {
+						continue;
+					}
+					array_init(&dummy);
+					ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(row), key, pData) {
+						// 第二个循环 values
+						if (num == 0) {
+							// 第一行生成字段列表
+							key = sqlBuilderEscapeKeyword(key);
+							add_next_index_str(&keys, key);
+						}
+						add_next_index_zval(&dummy, pData);
+						zval_add_ref(pData);
+					} ZEND_HASH_FOREACH_END();
+					php_implode(delimComma, &dummy, &values);
+					add_next_index_zval(&setValues, &values);
+					zval_ptr_dtor(&dummy);
+				} ZEND_HASH_FOREACH_END();
+				// 连接部分
+				smart_str_appendl_ex(sql, ZEND_STRL(" ("), 0);
+				php_implode(delimComma, &keys, &dummy);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+				smart_str_appendl_ex(sql, ZEND_STRL(") VALUES ("), 0);
+				tstr = zend_string_init(ZEND_STRL("),("), 0);
+				php_implode(tstr, &setValues, &dummy);
+				zend_string_release(tstr);
+				smart_str_append(sql, Z_STR(dummy));
+				zval_ptr_dtor(&dummy);
+				smart_str_appendl_ex(sql, ZEND_STRL(")"), 0);
+				zval_ptr_dtor(&setValues);
+				if (sqlType == SQLTYPE_INSERT) {
+					// onDuplicateKeyUpdate
+					pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), 1, NULL);
+					if (Z_TYPE_P(pValue) == IS_TRUE) {
+						zval *pExcludeFields;
+						pExcludeFields = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
+						if (Z_TYPE_P(pExcludeFields) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pExcludeFields)) < zend_hash_num_elements(Z_ARRVAL(keys))) {
+							smart_str_appendl_ex(sql, ZEND_STRL(" ON DUPLICATE KEY UPDATE"), 0);
+							array_init(&setValues);
+							ZEND_HASH_FOREACH_VAL(Z_ARRVAL(keys), pData) {
+								key = Z_STR_P(pData);
+								excludedContinue = 0;
+								ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(pExcludeFields), pData) {
+									tstr = sqlBuilderEscapeKeyword(zval_get_string(pData));
+									if (ZSTR_VAL(key) == ZSTR_VAL(tstr) || (ZSTR_LEN(key) == ZSTR_LEN(tstr) && memcmp(ZSTR_VAL(key), ZSTR_VAL(tstr), ZSTR_LEN(key)) == 0)) {
+										// 在排除列表里，不执行 update 操作
+										excludedContinue = 1;
+										zend_string_release(tstr);
+										break;
+									}
+									zend_string_release(tstr);
+								} ZEND_HASH_FOREACH_END();
+								if (excludedContinue) {
+									// 跳过循环
+									continue;
+								}
+								tstr = strpprintf(0, " %s = VALUES(%s)", ZSTR_VAL(key), ZSTR_VAL(key));
+								add_next_index_str(&setValues, tstr);
+							} ZEND_HASH_FOREACH_END();
+							php_implode(delimComma, &setValues, &dummy);
+							smart_str_append(sql, Z_STR(dummy));
+							zval_ptr_dtor(&setValues);
+							zval_ptr_dtor(&dummy);
+						}
+					}
+				}
+				zval_ptr_dtor(pSet);
+				zval_ptr_dtor(&keys);
+			}
+			break;
+		case SQLTYPE_UPDATE:
+			smart_str_appendl_ex(sql, ZEND_STRL("UPDATE "), 0);
 			// from
 			pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_from"), 1, NULL);
 			if (Z_TYPE_P(pValue) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pValue)) > 0) {
@@ -1299,45 +1416,12 @@ _from:
 				zval_ptr_dtor(&setValues);
 				zval_ptr_dtor(&dummy);
 			}
-			if (sqlType == SQLTYPE_INSERT) {
-				// onDuplicateKeyUpdate
-				pValue = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_duplicateKeyUpdate"), 1, NULL);
-				if (Z_TYPE_P(pValue) == IS_TRUE) {
-					zval *pExcludeFields;
-					pExcludeFields = zend_read_property(sqlBuilderCe, this, ZEND_STRL("_excludeFields"), 1, NULL);
-					if (Z_TYPE_P(pExcludeFields) == IS_ARRAY && zend_hash_num_elements(Z_ARRVAL_P(pExcludeFields)) < zend_hash_num_elements(Z_ARRVAL_P(pSet))) {
-						smart_str_appendl_ex(sql, ZEND_STRL(" ON DUPLICATE KEY UPDATE"), 0);
-						array_init(&setValues);
-						ZEND_HASH_FOREACH_STR_KEY(Z_ARRVAL_P(pSet), key) {
-							if (!key) {
-								continue;
-							}
-							excludedContinue = 0;
-							ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(pExcludeFields), pData) {
-								tstr = zval_get_string(pData);
-								if (ZSTR_VAL(key) == ZSTR_VAL(tstr) || (ZSTR_LEN(key) == ZSTR_LEN(tstr) && memcmp(ZSTR_VAL(key), ZSTR_VAL(tstr), ZSTR_LEN(key)) == 0)) {
-									// 在排除列表里，不执行 update 操作
-									excludedContinue = 1;
-									break;
-								}
-							} ZEND_HASH_FOREACH_END();
-							if (excludedContinue) {
-								// 跳过循环
-								continue;
-							}
-							key = sqlBuilderEscapeKeyword(key);
-							tstr = strpprintf(0, " %s = VALUES(%s)", ZSTR_VAL(key), ZSTR_VAL(key));
-							add_next_index_str(&setValues, tstr);
-							zend_string_release(key);
-						} ZEND_HASH_FOREACH_END();
-						php_implode(delimComma, &setValues, &dummy);
-						smart_str_append(sql, Z_STR(dummy));
-						zval_ptr_dtor(&setValues);
-						zval_ptr_dtor(&dummy);
-					}
-				}
-			} else if (sqlType == SQLTYPE_UPDATE) {
-				goto _where;
+			// where
+			tstr = sqlBuilderCompileWhere(this, WHERETYPE_WHERE);
+			if (tstr && ZSTR_LEN(tstr)) {
+				smart_str_appendl_ex(sql, ZEND_STRL(" WHERE "), 0);
+				smart_str_append(sql, tstr);
+				zend_string_release(tstr);
 			}
 			break;
 		case SQLTYPE_DELETE:
@@ -1349,7 +1433,6 @@ _from:
 				smart_str_append(sql, Z_STR(dummy));
 				zval_ptr_dtor(&dummy);
 			}
-_where:
 			// where
 			tstr = sqlBuilderCompileWhere(this, WHERETYPE_WHERE);
 			if (tstr && ZSTR_LEN(tstr)) {
