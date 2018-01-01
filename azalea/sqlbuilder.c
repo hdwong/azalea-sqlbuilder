@@ -480,9 +480,8 @@ void sqlBuilderWhere(zval *this, zend_long whereType, zval *conditions, zval *va
 
 	if (!pWhere) {
 		// 初始化 _where 数组
-		pWhere = &rec;
-		array_init(pWhere);
-		zend_hash_index_add(Z_ARRVAL_P(_where), whereType, pWhere);
+		array_init(&rec);
+		pWhere = zend_hash_index_add(Z_ARRVAL_P(_where), whereType, &rec);
 	}
 	// 初始化 conditions
 	if (Z_TYPE_P(conditions) != IS_ARRAY && Z_TYPE_P(conditions) != IS_STRING) {
@@ -499,6 +498,7 @@ void sqlBuilderWhere(zval *this, zend_long whereType, zval *conditions, zval *va
 			// 获取 where 前缀
 			wherePrefix = sqlBuilderGetWherePrefix(Z_TYPE_P(pWhereGroupPrefix) == IS_TRUE, pWhere, pType);
 			segment = strpprintf(0, "%s%s", ZSTR_VAL(wherePrefix), Z_STRVAL_P(conditions));
+			zend_string_release(wherePrefix);
 			add_next_index_str(pWhere, segment);
 			ZVAL_TRUE(pWhereGroupPrefix);
 			return;
