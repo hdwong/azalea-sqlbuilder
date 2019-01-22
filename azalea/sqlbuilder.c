@@ -138,7 +138,7 @@ static void sqlBuilderReset(zval *this)
 /* }}} */
 
 /* {{{ proto sqlBuilderEscapeStr */
-zend_string * sqlBuilderEscapeStr(zend_string *val)
+zend_string * sqlBuilderEscapeStr(zend_string *val, zend_bool escapeLike)
 {
 	zend_string *ret;
 	char *result, *pResult, *p = ZSTR_VAL(val);
@@ -164,6 +164,10 @@ zend_string * sqlBuilderEscapeStr(zend_string *val)
 				*pResult++ = *p;
 			}
 			lenResult += 2;
+		} else if (escapeLike && (*p == '%' || *p == '_')) {
+			*pResult++ = '\\';
+			*pResult++ = *p;
+			lenResult += 2;
 		} else {
 			*pResult++ = *p;
 			++lenResult;
@@ -182,7 +186,7 @@ zend_string * sqlBuilderEscapeStr(zend_string *val)
 /* }}} */
 
 /* {{{ proto sqlBuilderEscapeEx */
-void sqlBuilderEscapeEx(zval *return_value, zval *val, zend_bool escapeValue)
+void sqlBuilderEscapeEx(zval *return_value, zval *val, zend_bool escapeValue, zend_bool escapeLike)
 {
 	zend_ulong h;
 	zend_string *key;
@@ -194,10 +198,10 @@ void sqlBuilderEscapeEx(zval *return_value, zval *val, zend_bool escapeValue)
 			ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(val), h, key, pData) {
 				{
 					zval ret;
-					sqlBuilderEscapeEx(&ret, pData, escapeValue);
+					sqlBuilderEscapeEx(&ret, pData, escapeValue, escapeLike);
 					if (Z_TYPE(ret) == IS_STRING || Z_TYPE(ret) == IS_ARRAY || Z_TYPE(ret) == IS_NULL) {
 						if (key) {
-							key = sqlBuilderEscapeStr(key);
+							key = sqlBuilderEscapeStr(key, escapeLike);
 							add_assoc_zval_ex(return_value, ZSTR_VAL(key), ZSTR_LEN(key), &ret);
 							zend_string_release(key);
 						} else {
@@ -212,7 +216,7 @@ void sqlBuilderEscapeEx(zval *return_value, zval *val, zend_bool escapeValue)
 			return;
 		case IS_STRING:
 			if (escapeValue) {
-				RETURN_STR(sqlBuilderEscapeStr(Z_STR_P(val)));
+				RETURN_STR(sqlBuilderEscapeStr(Z_STR_P(val), escapeLike));
 			} else {
 				RETURN_ZVAL(val, 1, 0);
 			}
@@ -260,7 +264,7 @@ zend_string * sqlBuilderCompileBinds(zend_string *segment, zval *binds, zend_boo
 	char *p, *pos, *value;
 	smart_str buf = {0};
 
-	sqlBuilderEscapeEx(&args, binds, escapeValue);
+	sqlBuilderEscapeEx(&args, binds, escapeValue, 0);
 	if (Z_TYPE(args) == IS_FALSE) {
 		zval_ptr_dtor(&args);
 		return zend_string_init(ZSTR_VAL(segment), ZSTR_LEN(segment), 0);
@@ -280,7 +284,7 @@ zend_string * sqlBuilderCompileBinds(zend_string *segment, zval *binds, zend_boo
 				tstr = sqlBuilderEscapeKeyword(Z_STR_P(pData));
 			} else {
 				// escape keyword field
-				field = sqlBuilderEscapeStr(Z_STR_P(pData));
+				field = sqlBuilderEscapeStr(Z_STR_P(pData), 0);
 				tstr = sqlBuilderEscapeKeyword(field);
 				zend_string_release(field);
 			}
@@ -728,7 +732,7 @@ PHP_METHOD(azalea_sqlbuilder, select)
 
 	// 转义
 	if (escapeValue) {
-		sqlBuilderEscapeEx(&escaped, &selects, 1);
+		sqlBuilderEscapeEx(&escaped, &selects, 1, 0);
 		zval_ptr_dtor(&selects);
 		ret = &escaped;
 	} else {
@@ -987,7 +991,7 @@ void sqlBuilderBy(zval *this, zend_long byType, zval *byValue, zend_bool escapeV
 	}
 	// 转义
 	if (escapeValue) {
-		sqlBuilderEscapeEx(&escaped, byValue, 1);
+		sqlBuilderEscapeEx(&escaped, byValue, 1, 0);
 		zval_ptr_dtor(byValue);
 		byValue = &escaped;
 	}
@@ -1060,7 +1064,7 @@ static void _addToSet(zval *pSet, zval *set)
 		}
 		zval value;
 		escapeValue = 1;
-		key = sqlBuilderEscapeStr(key);
+		key = sqlBuilderEscapeStr(key, 0);
 		if (Z_TYPE_P(pData) == IS_ARRAY) {
 			// escape & value
 			zval *pEscape, *pValue;
@@ -1070,10 +1074,10 @@ static void _addToSet(zval *pSet, zval *set)
 			if ((pEscape = zend_hash_str_find(Z_ARRVAL_P(pData), ZEND_STRL("escape")))) {
 				escapeValue = zval_is_true(pEscape);
 			}
-			sqlBuilderEscapeEx(&value, pValue, escapeValue);
+			sqlBuilderEscapeEx(&value, pValue, escapeValue, 0);
 		} else {
 			// string
-			sqlBuilderEscapeEx(&value, pData, escapeValue);
+			sqlBuilderEscapeEx(&value, pData, escapeValue, 0);
 		}
 		if (Z_TYPE(value) == IS_NULL) {
 			// for set NULL syntax
